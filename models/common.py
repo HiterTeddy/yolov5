@@ -37,23 +37,34 @@ def autopad(k, p=None):  # kernel, padding
 
 class Conv(nn.Module):
     # Standard convolution
-    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
+    def __init__(self, in_channels : int, out_channels : int, kernel_size = 1, stride = 1, padding = None, g = 1, act : bool = True):
         super().__init__()
-        self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
-        self.bn = nn.BatchNorm2d(c2)
-        self.act = nn.SiLU() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, autopad(kernel_size, padding), groups=g, bias=False)
+        self.bn = nn.BatchNorm2d(out_channels)
+        self.act = None
+        if act is True:
+            self.act = nn.SiLU()
+        elif isinstance(act, nn.Module):
+            self.act = act
+        else:
+            self.act = nn.Identity()
 
     def forward(self, x):
-        return self.act(self.bn(self.conv(x)))
+        x = self.conv(x)
+        x = self.bn(x)
+        x = self.act(x)
+        return x
 
     def forward_fuse(self, x):
-        return self.act(self.conv(x))
+        x = self.conv(x)
+        x = self.act(x)
+        return x
 
 
 class DWConv(Conv):
     # Depth-wise convolution class
-    def __init__(self, c1, c2, k=1, s=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
-        super().__init__(c1, c2, k, s, g=math.gcd(c1, c2), act=act)
+    def __init__(self, in_channel, out_channel, kernel_size=1, stride=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
+        super().__init__(in_channel, out_channel, kernel_size, stride, g=math.gcd(in_channel, out_channel), act=act)
 
 
 class TransformerLayer(nn.Module):
@@ -94,15 +105,18 @@ class TransformerBlock(nn.Module):
 
 class Bottleneck(nn.Module):
     # Standard bottleneck
-    def __init__(self, c1, c2, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, shortcut, groups, expansion
+    def __init__(self, in_channel, out_channel, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, shortcut, groups, expansion
         super().__init__()
-        c_ = int(c2 * e)  # hidden channels
-        self.cv1 = Conv(c1, c_, 1, 1)
-        self.cv2 = Conv(c_, c2, 3, 1, g=g)
-        self.add = shortcut and c1 == c2
+        c_ = int(out_channel * e)  # hidden channels
+        self.cv1 = Conv(in_channel, c_, 1, 1)
+        self.cv2 = Conv(c_, out_channel, 3, 1, g=g)
+        self.add = shortcut and in_channel == out_channel
 
     def forward(self, x):
-        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+        if self.add:
+            return x + self.cv2(self.cv1(x))
+        else:
+            return self.cv2(self.cv1(x))
 
 
 class BottleneckCSP(nn.Module):
@@ -126,17 +140,19 @@ class BottleneckCSP(nn.Module):
 
 class C3(nn.Module):
     # CSP Bottleneck with 3 convolutions
-    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
+    def __init__(self, in_channel, out_channel, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
         super().__init__()
-        c_ = int(c2 * e)  # hidden channels
-        self.cv1 = Conv(c1, c_, 1, 1)
-        self.cv2 = Conv(c1, c_, 1, 1)
-        self.cv3 = Conv(2 * c_, c2, 1)  # optional act=FReLU(c2)
+        c_ = int(out_channel * e)  # hidden channels
+        self.cv1 = Conv(in_channel, c_, 1, 1)
+        self.cv2 = Conv(in_channel, c_, 1, 1)
+        self.cv3 = Conv(2 * c_, out_channel, 1)  # optional act=FReLU(c2)
         self.m = nn.Sequential(*(Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)))
         # self.m = nn.Sequential(*(CrossConv(c_, c_, 3, 1, g, 1.0, shortcut) for _ in range(n)))
 
     def forward(self, x):
-        return self.cv3(torch.cat((self.m(self.cv1(x)), self.cv2(x)), 1))
+        x = torch.cat((self.m(self.cv1(x)), self.cv2(x)), 1)
+        x = self.cv3(x)
+        return x
 
 
 class C3TR(C3):

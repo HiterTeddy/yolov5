@@ -119,9 +119,9 @@ class ComputeLoss:
         self.device = device
 
     def __call__(self, p, targets):  # predictions, targets
-        lcls = torch.zeros(1, device=self.device)  # class loss
-        lbox = torch.zeros(1, device=self.device)  # box loss
-        lobj = torch.zeros(1, device=self.device)  # object loss
+        loss_cls = torch.zeros(1, device=self.device)  # class loss
+        loss_box = torch.zeros(1, device=self.device)  # box loss
+        loss_obj = torch.zeros(1, device=self.device)  # object loss
         tcls, tbox, indices, anchors = self.build_targets(p, targets)  # targets
 
         # Losses
@@ -139,7 +139,7 @@ class ComputeLoss:
                 pwh = (pwh.sigmoid() * 2) ** 2 * anchors[i]
                 pbox = torch.cat((pxy, pwh), 1)  # predicted box
                 iou = bbox_iou(pbox.T, tbox[i], x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
-                lbox += (1.0 - iou).mean()  # iou loss
+                loss_box += (1.0 - iou).mean()  # iou loss
 
                 # Objectness
                 iou = iou.detach().clamp(0).type(tobj.dtype)
@@ -154,25 +154,25 @@ class ComputeLoss:
                 if self.nc > 1:  # cls loss (only if multiple classes)
                     t = torch.full_like(pcls, self.cn, device=self.device)  # targets
                     t[range(n), tcls[i]] = self.cp
-                    lcls += self.BCEcls(pcls, t)  # BCE
+                    loss_cls += self.BCEcls(pcls, t)  # BCE
 
                 # Append targets to text file
                 # with open('targets.txt', 'a') as file:
                 #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
 
             obji = self.BCEobj(pi[..., 4], tobj)
-            lobj += obji * self.balance[i]  # obj loss
+            loss_obj += obji * self.balance[i]  # obj loss
             if self.autobalance:
                 self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
 
         if self.autobalance:
             self.balance = [x / self.balance[self.ssi] for x in self.balance]
-        lbox *= self.hyp['box']
-        lobj *= self.hyp['obj']
-        lcls *= self.hyp['cls']
+        loss_box *= self.hyp['box']
+        loss_obj *= self.hyp['obj']
+        loss_cls *= self.hyp['cls']
         bs = tobj.shape[0]  # batch size
 
-        return (lbox + lobj + lcls) * bs, torch.cat((lbox, lobj, lcls)).detach()
+        return (loss_box + loss_obj + loss_cls) * bs, torch.cat((loss_box, loss_obj, loss_cls)).detach()
 
     def build_targets(self, p, targets):
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
