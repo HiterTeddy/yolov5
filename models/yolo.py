@@ -259,42 +259,44 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
     no = na * (nc + 5)  # number of outputs = anchors * (classes + 5)
 
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
-    for i, (f, n, m, args) in enumerate(d['backbone'] + d['head']):  # from, number, module, args
-        m = eval(m) if isinstance(m, str) else m  # eval strings
+    for i, (f, num, model, args) in enumerate(d['backbone'] + d['head']):  # from, number, module, args
+        model = eval(model) if isinstance(model, str) else model  # eval strings
         for j, a in enumerate(args):
             try:
                 args[j] = eval(a) if isinstance(a, str) else a  # eval strings
             except NameError:
                 pass
 
-        n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
-        if m in (Conv, GhostConv, Bottleneck, GhostBottleneck, SPP, SPPF, DWConv, MixConv2d, Focus, CrossConv,
+        num = n_ = max(round(num * gd), 1) if num > 1 else num  # depth gain
+        if model in (Conv, GhostConv, Bottleneck, GhostBottleneck, SPP, SPPF, DWConv, MixConv2d, Focus, CrossConv,
                  BottleneckCSP, C3, C3TR, C3SPP, C3Ghost):
             c1, c2 = ch[f], args[0]
             if c2 != no:  # if not output
                 c2 = make_divisible(c2 * gw, 8)
 
             args = [c1, c2, *args[1:]]
-            if m in [BottleneckCSP, C3, C3TR, C3Ghost]:
-                args.insert(2, n)  # number of repeats
-                n = 1
-        elif m is nn.BatchNorm2d:
+            if model in [BottleneckCSP, C3, C3TR, C3Ghost]:
+                args.insert(2, num)  # number of repeats
+                num = 1
+        elif model is nn.BatchNorm2d:
             args = [ch[f]]
-        elif m is Concat:
+        elif model is Concat:
             c2 = sum(ch[x] for x in f)
-        elif m is Detect:
+        elif model is Detect:
             args.append([ch[x] for x in f])
             if isinstance(args[1], int):  # number of anchors
                 args[1] = [list(range(args[1] * 2))] * len(f)
-        elif m is Contract:
+        elif model is Contract:
             c2 = ch[f] * args[0] ** 2
-        elif m is Expand:
+        elif model is Expand:
             c2 = ch[f] // args[0] ** 2
+        elif model is CBAMBlock:
+            c2 = args[0]
         else:
             c2 = ch[f]
 
-        m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
-        t = str(m)[8:-2].replace('__main__.', '')  # module type
+        m_ = nn.Sequential(*(model(*args) for _ in range(num))) if num > 1 else model(*args)  # module
+        t = str(model)[8:-2].replace('__main__.', '')  # module type
         np = sum(x.numel() for x in m_.parameters())  # number params
         m_.i, m_.f, m_.type, m_.np = i, f, t, np  # attach index, 'from' index, type, number params
         LOGGER.info(f'{i:>3}{str(f):>18}{n_:>3}{np:10.0f}  {t:<40}{str(args):<30}')  # print
